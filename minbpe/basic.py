@@ -30,6 +30,7 @@ class BasicTokenizer(Tokenizer):
         merges = {} # (int, int) -> int
         vocab = {idx: bytes([idx]) for idx in range(256)} # int -> bytes
         for i in range(num_merges):
+            print(i, '/', num_merges)
             # count up the number of times every consecutive pair appears
             stats = get_stats(ids)
             # find the pair with the highest count
@@ -62,7 +63,9 @@ class BasicTokenizer(Tokenizer):
         vocab = {idx: bytes([idx]) for idx in range(256)} # int -> bytes
 
         ids = numpy.array(ids)
-        for i in range(num_merges):
+        for i in range(num_merges):            
+            print(i, '/', num_merges)
+            
             pairs = numpy.stack((ids[:-1], ids[1:]), axis=1)
             unique, counts = numpy.unique(pairs, return_counts=True, axis=0)
             pair_index = numpy.argmax(counts)
@@ -100,6 +103,8 @@ class BasicTokenizer(Tokenizer):
         merge_pairs = torch.zeros((num_merges, 2), dtype=torch.int64).cuda()
 
         for i in range(num_merges):
+            print(i, '/', num_merges)
+            
             pairs = torch.stack((ids[:-1], ids[1:]), dim=1)
             unique, counts = torch.unique(pairs, return_counts=True, dim=0)
             pair_index = torch.argmax(counts)
