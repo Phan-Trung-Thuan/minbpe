@@ -10,7 +10,8 @@ But:
 """
 
 from .base import Tokenizer, get_stats, merge
-
+import numpy
+import torch
 
 class BasicTokenizer(Tokenizer):
 
@@ -47,6 +48,85 @@ class BasicTokenizer(Tokenizer):
         # save class variables
         self.merges = merges # used in encode()
         self.vocab = vocab   # used in decode()
+
+    def train_vectorized(self, text, vocab_size, verbose=False):
+        assert vocab_size >= 256
+        num_merges = vocab_size - 256
+
+        # input text preprocessing
+        text_bytes = text.encode("utf-8") # raw bytes
+        ids = list(text_bytes) # list of integers in range 0..255
+
+        # iteratively merge the most common pairs to create new tokens
+        merges = {} # (int, int) -> int
+        vocab = {idx: bytes([idx]) for idx in range(256)} # int -> bytes
+
+        ids = numpy.array(ids)
+        for i in range(num_merges):
+            pairs = numpy.stack((ids[:-1], ids[1:]), axis=1)
+            unique, counts = numpy.unique(pairs, return_counts=True, axis=0)
+            pair_index = numpy.argmax(counts)
+            pair = unique[pair_index]
+            count = counts[pair_index]
+
+            # mint a new token: assign it the next available id
+            idx = 256 + i
+
+            mask = numpy.all(pairs == pair, axis=1)
+            mask = numpy.append(mask, False)
+            ids[mask] = idx
+            ids = ids[~numpy.roll(mask, 1)]
+
+            # save the merge
+            merges[tuple(pair)] = idx
+            vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
+            # prints
+            if verbose:
+                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {count} occurrences")
+
+        # save class variables
+        self.merges = merges # used in encode()
+        self.vocab = vocab   # used in decode()
+
+    def train_gpu(self, text: str, vocab_size: int, verbose=False):
+        assert vocab_size >= 256
+        num_merges = vocab_size - 256
+
+        # input text preprocessing
+        text_bytes = text.encode("utf-8") # raw bytes
+        ids = list(text_bytes) # list of integers in range 0..255
+
+        ids = torch.tensor(ids, dtype=torch.int64).cuda()
+        merge_pairs = torch.zeros((num_merges, 2), dtype=torch.int64).cuda()
+
+        for i in range(num_merges):
+            pairs = torch.stack((ids[:-1], ids[1:]), dim=1)
+            unique, counts = torch.unique(pairs, return_counts=True, dim=0)
+            pair_index = torch.argmax(counts)
+            pair = unique[pair_index]
+            count = counts[pair_index]
+
+            mask = torch.all(pairs == pair, dim=1)
+            mask = torch.cat((mask, torch.tensor([False]).cuda()))
+            ids[mask] = i + 256
+            ids = ids[~torch.roll(mask, 1, 0)]
+
+            merge_pairs[i] = pair
+
+        self.merges = {
+            tuple(pair.tolist()): j + 256
+            for j, pair in enumerate(merge_pairs)
+        }
+
+        vocab = {idx: bytes([idx]) for idx in range(256)} # int -> bytes
+        for i in range(num_merges):
+            pair = merge_pairs[i]
+            idx = 256 + i
+            pair_tuple = tuple(pair.tolist())
+            vocab[idx] = vocab[pair_tuple[0]] + vocab[pair_tuple[1]]
+            if verbose:
+                print(f"merge {i+1}/{num_merges}: {pair_tuple} -> {idx} ({vocab[idx]}) had {count} occurrences")
+        self.vocab = vocab
 
     def decode(self, ids):
         # given ids (list of integers), return Python string
